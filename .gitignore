@@ -1,3 +1,7 @@
 *.pdf
 hand_landmarker.task
 docs/project_ideas.md
+CLAUDE.md
+manim_viz/
+temp/
+.venv/

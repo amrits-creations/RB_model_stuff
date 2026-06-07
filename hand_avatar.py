@@ -1,3 +1,4 @@
+import argparse
 import os
 import urllib.request
 
@@ -7,7 +8,7 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
-from predictive_coding import PredictiveCodingLayer
+from models import MODELS
 
 MODEL_PATH = "hand_landmarker.task"
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
@@ -45,6 +46,10 @@ def draw_hand(frame, coords, color, offset_x=0):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", choices=MODELS.keys(), default="single")
+    args = parser.parse_args()
+
     download_model()
 
     base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
@@ -58,8 +63,8 @@ def main():
     detector = vision.HandLandmarker.create_from_options(options)
 
     hidden_dim = 16
-    pcn = PredictiveCodingLayer(INPUT_DIM, hidden_dim)
-    avatar_state = np.ones((INPUT_DIM, 1)) * 0.5
+    pcn = MODELS[args.model](INPUT_DIM, hidden_dim) # initialize the model with the input and hidden dims.
+    avatar_state = np.ones((INPUT_DIM, 1)) * 0.5 # this is the initial state of the avatar - we start it at the center pose (all 0.5s) and let it learn from there. The model will update this state over time to try to match the user's hand pose.
     action_lr = 0.25
 
     TRAINING_FRAMES = 150
@@ -80,7 +85,7 @@ def main():
             if not ret: break
 
             frame = cv2.flip(frame, 1)
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) # OpenCV rerads images in BGR but MediaPipe expects RGB
 
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
             detection_result = detector.detect(mp_image)
@@ -97,8 +102,7 @@ def main():
                     user_coords.extend([lm.x, lm.y])
 
                 Y_user = np.array(user_coords).reshape(INPUT_DIM, 1)
-                r_td = np.dot(pcn.U.T, Y_user)
-                I_avatar = avatar_state
+                r_td = np.dot(pcn.U.T, Y_user) # I don't like this line. I won't explain why. I just don't.
 
                 if current_frame < TRAINING_FRAMES:
                     # PHASE 1: PRE-TRAINING (Observation Only)
@@ -113,8 +117,8 @@ def main():
                     # PHASE 2: ACTIVE INFERENCE
 
                     for _ in range(3):
-                        pcn.update_state(I_avatar, r_td, dt=0.1)
-                    pcn.update_weights(I_avatar, dt=0.1)
+                        pcn.update_state(avatar_state, r_td, dt=0.1) # Removed I_avatar because it was put in by the clanker and very obviously redundant.
+                    pcn.update_weights(avatar_state, dt=0.1)
 
                     prediction = pcn.get_prediction()
                     avatar_state += action_lr * (prediction - avatar_state)
